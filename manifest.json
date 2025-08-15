@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Context Word Translator",
+  "version": "1.0",
+  "description": "选中单词后按快捷键，获取上下文含义与翻译。",
+  "permissions": ["scripting", "activeTab"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "lookup-word": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+U"
+      },
+      "description": "翻译选中单词和句子"
+    },
+    "lookup-local-word": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+O",
+        "mac": "Command+O"
+      },
+      "description": "从四级词典查询选中单词"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "action": {
+    "default_title": "Context Word Translator"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["四级.txt"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
