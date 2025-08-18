@@ -11,7 +11,7 @@
     "lookup-word": {
       "suggested_key": {
         "default": "Ctrl+Shift+Y",
-        "mac": "Command+U"
+        "mac": "Command+E"
       },
       "description": "翻译选中单词和句子"
     },
