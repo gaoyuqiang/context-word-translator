@@ -1,56 +1,7 @@
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.action === "lookup") {
         const selection = window.getSelection();
-        const selectedText = selection.toString();
-        if (!selectedText) return;
-
-        const node = selection.anchorNode;
-        if (!node) return;
-
-        const text = node.textContent;
-        const offset = selection.anchorOffset;
-        const before = text.slice(0, offset);
-        const after = text.slice(offset);
-        const left = before.lastIndexOf('.') + 1;
-        const rightEnd = after.indexOf('.') + 1;
-        const right = rightEnd > 0 ? offset + rightEnd : text.length;
-
-        const sentence = text.slice(left, right).trim();
-
-        console.log("gao3 内容脚本已执行")
-        showLoading();
-        fetch("https://ark.cn-beijing.volces.com/api/v3/chat/completions", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": "Bearer 10c1f619-4e57-446b-9663-f40f880ec5ff"
-            },
-            body: JSON.stringify({
-                model: "ep-20241226150845-xbl62",
-                messages: [
-                    {
-                        role: "user",
-                        content: [
-                            {
-                                type: "text",
-                                text: `我选中的英文是：“${selectedText}”，它出现在这句话中：“${sentence}”。请告诉我在这个上下文中，“${selectedText}”是什么意思？同时翻译整句`
-                            }
-                        ]
-                    }
-                ]
-            })
-        })
-        .then(res => res.json())
-        .then(data => {
-            console.log('return')
-            hideLoading();
-            const answer = data.choices[0].message.content;
-            showCustomPopup(answer);
-        })
-        .catch(err => {
-            console.error("API 请求失败：", err);
-            hideLoading();
-        });
+        performAPILookup(selection);
     }
 
     if (msg.action === "lookupLocal") {
@@ -64,9 +15,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         showLoading();
         chrome.runtime.sendMessage({ action: "getLocalDict" }, (resp) => {
             if (!resp || !resp.ok) {
+                // If local dict fails, fall back to API
                 console.error("读取词典失败：", resp && resp.error);
                 hideLoading();
-                showCustomPopup("读取本地词典失败，请重试。");
+                performAPILookup(selection);
                 return;
             }
 
@@ -81,8 +33,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 found = lines.find(line => regexFallback.test(line));
             }
 
-            hideLoading();
             if (found) {
+                hideLoading();
                 const m = found.match(/^([A-Za-z\-']+)\s*(\[[^\]]+\])?\s*(.*)$/);
                 if (m) {
                     const wordStr = m[1];
@@ -94,11 +46,66 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     showCustomPopup(`【四级词典】\n${found}`);
                 }
             } else {
-                showCustomPopup(`【四级词典】\n未找到：${word}`);
+                // Not found in local dict, fall back to API without showing "not found" message
+                hideLoading();
+                performAPILookup(selection);
             }
         });
     }
 });
+
+function performAPILookup(selection) {
+    const selectedText = selection.toString();
+    if (!selectedText) return;
+
+    const node = selection.anchorNode;
+    if (!node) return;
+
+    const text = node.textContent;
+    const offset = selection.anchorOffset;
+    const before = text.slice(0, offset);
+    const after = text.slice(offset);
+    const left = before.lastIndexOf('.') + 1;
+    const rightEnd = after.indexOf('.') + 1;
+    const right = rightEnd > 0 ? offset + rightEnd : text.length;
+
+    const sentence = text.slice(left, right).trim();
+
+    console.log("gao3 内容脚本已执行")
+    showLoading();
+    fetch("https://ark.cn-beijing.volces.com/api/v3/chat/completions", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer 10c1f619-4e57-446b-9663-f40f880ec5ff"
+        },
+        body: JSON.stringify({
+            model: "ep-20241226150845-xbl62",
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        {
+                            type: "text",
+                            text: `我选中的英文是："${selectedText}"，它出现在这句话中："${sentence}"。请告诉我在这个上下文中，"${selectedText}"是什么意思？同时翻译整句`
+                        }
+                    ]
+                }
+            ]
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        console.log('return')
+        hideLoading();
+        const answer = data.choices[0].message.content;
+        showCustomPopup(answer);
+    })
+    .catch(err => {
+        console.error("API 请求失败：", err);
+        hideLoading();
+    });
+}
 
 function showCustomPopup(content) {
   const existing = document.getElementById("context-word-popup");
@@ -134,7 +141,7 @@ function showCustomPopup(content) {
   popup.appendChild(closeBtn);
 
   const contentDiv = document.createElement("div");
-  contentDiv.innerHTML = content.replace(/\n/g, "<br>");
+  contentDiv.innerHTML = renderMarkdown(content);
   popup.appendChild(contentDiv);
 
   document.body.appendChild(popup);
@@ -179,4 +186,105 @@ function hideLoading() {
   if (loading) loading.remove();
   const style = document.getElementById("context-loading-style");
   if (style) style.remove();
+}
+
+function renderMarkdown(md) {
+  if (!md) return "";
+  const lines = md.split(/\r?\n/);
+  const html = [];
+  let inCode = false;
+  let codeBuf = [];
+  let listOpen = false;
+
+  const closeListIfOpen = () => {
+    if (listOpen) {
+      html.push("</ul>");
+      listOpen = false;
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const line = raw.replace(/\t/g, "    ");
+
+    // fenced code blocks
+    if (/^\s*```/.test(line)) {
+      if (inCode) {
+        // close code
+        const code = codeBuf.join("\n");
+        html.push(`<pre style="background:#f6f8fa;padding:10px;border-radius:6px;overflow:auto;white-space:pre;"><code>${escapeHtml(code)}</code></pre>`);
+        codeBuf = [];
+        inCode = false;
+      } else {
+        closeListIfOpen();
+        inCode = true;
+      }
+      continue;
+    }
+
+    if (inCode) {
+      codeBuf.push(raw);
+      continue;
+    }
+
+    // headings
+    const heading = line.match(/^\s*(#{1,6})\s+(.+)$/);
+    if (heading) {
+      closeListIfOpen();
+      const level = heading[1].length;
+      const text = heading[2];
+      html.push(`<h${level} style="margin:6px 0;">${formatInline(text)}</h${level}>`);
+      continue;
+    }
+
+    // unordered list
+    const listItem = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (listItem) {
+      if (!listOpen) {
+        html.push('<ul style="padding-left:20px;margin:6px 0 6px 16px;">');
+        listOpen = true;
+      }
+      html.push(`<li>${formatInline(listItem[1])}</li>`);
+      continue;
+    }
+
+    // paragraph / blank
+    closeListIfOpen();
+    if (line.trim() === "") {
+      html.push("<br>");
+    } else {
+      html.push(`<p style="margin:6px 0;">${formatInline(line)}</p>`);
+    }
+  }
+
+  // close any open structures
+  if (inCode) {
+    const code = codeBuf.join("\n");
+    html.push(`<pre style="background:#f6f8fa;padding:10px;border-radius:6px;overflow:auto;white-space:pre;"><code>${escapeHtml(code)}</code></pre>`);
+  }
+  if (listOpen) html.push("</ul>");
+
+  return html.join("");
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatInline(text) {
+  let t = escapeHtml(text);
+  // inline code
+  t = t.replace(/`([^`]+)`/g, '<code style="background:#f6f8fa;padding:1px 4px;border-radius:4px;">$1<\/code>');
+  // bold
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1<\/strong>');
+  // italic (simple)
+  t = t.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1<\/em>');
+  // links
+  t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1<\/a>');
+  return t;
 }

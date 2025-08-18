@@ -20,7 +20,7 @@
         "default": "Ctrl+Shift+O",
         "mac": "Command+O"
       },
-      "description": "从四级词典查询选中单词"
+      "description": "先查本地词典，找不到则调用API"
     }
   },
   "content_scripts": [
